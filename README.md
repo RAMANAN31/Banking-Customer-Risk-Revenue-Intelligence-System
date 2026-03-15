@@ -1,9 +1,9 @@
-# 🏦 Banking Customer Risk & Revenue Intelligence System
-### HSBC Analyst Intern — End-to-End Analytics Project
+# Banking Customer Risk & Revenue Intelligence System
+### 
 
 ---
 
-## 📌 Project Overview
+## Project Overview
 
 An advanced analytics platform designed for a retail bank's Risk & Analytics team.
 The system ingests simulated banking data, engineers behavioural risk features,
@@ -13,7 +13,7 @@ and presents all insights through an interactive executive dashboard.
 
 ---
 
-## 🗂️ Project Structure
+## Project Structure
 
 ```
 hsbc_project/
@@ -54,7 +54,7 @@ hsbc_project/
 
 ```bash
 # 1. Clone / download project
-cd hsbc_project
+cd Banking_project
 
 # 2. Install dependencies
 pip install -r requirements.txt
@@ -83,7 +83,7 @@ python dashboard.py
 
 ---
 
-## 📊 Module Descriptions
+##  Module Descriptions
 
 ### Module 1 — Data Generator (`data_generator.py`)
 Simulates a realistic retail banking dataset:
@@ -163,7 +163,7 @@ Flask REST API + Plotly.js frontend with:
 
 ---
 
-## 📈 Sample Results (5,000 customer run)
+## Sample Results (5,000 customer run)
 
 | Metric                    | Value            |
 |---------------------------|------------------|
@@ -177,7 +177,7 @@ Flask REST API + Plotly.js frontend with:
 
 ---
 
-## 🏦 Business Value Delivered
+##  Business Value Delivered
 
 1. **Credit Approval Support**: Risk tier scores enable automated / semi-automated
    loan approval workflows, reducing manual review time.
@@ -192,7 +192,7 @@ Flask REST API + Plotly.js frontend with:
 
 ---
 
-## 📋 Assumptions & Limitations
+##  Assumptions & Limitations
 
 - **Data**: All data is synthetic. Income, loan amounts, and repayment behaviour
   are simulated using log-normal and Bernoulli distributions calibrated to
@@ -208,7 +208,7 @@ Flask REST API + Plotly.js frontend with:
 
 ---
 
-## 🔮 Future Enhancements
+##  Future Enhancements
 
 - **SHAP Waterfall Plots**: Individual loan-level explainability for compliance reporting
 - **Real BigQuery Integration**: Replace CSV pipeline with GCP BigQuery connector
@@ -218,20 +218,3 @@ Flask REST API + Plotly.js frontend with:
 - **Feature Store**: Centralise feature computation with Great Expectations validation
 
 ---
-
-## 🤝 How This Maps to HSBC JD Requirements
-
-| HSBC Requirement                          | Project Implementation                        |
-|-------------------------------------------|-----------------------------------------------|
-| Python / R / BigQuery / SQL               | Python throughout; SQL queries (BigQuery-compatible) |
-| Analytical tools & ML models              | Logistic Regression, Random Forest, GBM, KMeans, ARIMA |
-| POC delivery with subject matter knowledge| Flask REST API = deployable POC               |
-| Summarise approach, assumptions, limitations | Module descriptions + this README section  |
-| Extract & prepare data from data systems  | SQL queries + Pandas pipeline from BigQuery-ready CSVs |
-| Visualisation                             | Plotly dashboard + Matplotlib/Seaborn charts  |
-| Finance / Risk domain relevance           | Basel III references, NPA, CLV, EMI ratios    |
-| Senior management communication          | Executive dashboard — zero code exposure      |
-
----
-
-*Built for HSBC Analyst Intern Application · Retail Banking Analytics*

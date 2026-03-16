@@ -5,6 +5,7 @@
   Models  : ARIMA (statsmodels), Prophet (fallback to ARIMA)
   Purpose : Estimate Customer Lifetime Value and forecast
             portfolio-level revenue for next 12 months.
+  Enhancement: Persists monthly revenue & 12-month forecast to CSV
 ============================================================
 """
 
@@ -35,9 +36,8 @@ os.makedirs("outputs", exist_ok=True)
 def build_monthly_revenue(transactions: pd.DataFrame,
                           customers: pd.DataFrame) -> pd.DataFrame:
     """
-    Aggregate credit-side transactions as a proxy for bank revenue inflows
-    (fees, EMI receipts, interest income are approximated here).
-    Returns a monthly time-series DataFrame.
+    Aggregate credit-side transactions as a proxy for bank revenue inflows.
+    Saves monthly revenue to outputs/monthly_revenue.csv.
     """
     txn = transactions.copy()
     txn["transaction_date"] = pd.to_datetime(txn["transaction_date"])
@@ -57,6 +57,10 @@ def build_monthly_revenue(transactions: pd.DataFrame,
     monthly.columns = ["month", "revenue"]
     monthly["month"] = monthly["month"].dt.to_timestamp()
     monthly = monthly.sort_values("month").reset_index(drop=True)
+
+    # Save historical series for dashboard
+    monthly.to_csv("outputs/monthly_revenue.csv", index=False)
+    print("✅  Monthly revenue series saved → outputs/monthly_revenue.csv")
     return monthly
 
 
@@ -81,6 +85,45 @@ def run_arima_forecast(series: pd.Series, steps: int = 12):
     conf_int     = forecast_obj.conf_int(alpha=0.05)
 
     return forecast, conf_int, fitted
+
+
+def save_forecast_to_csv(monthly: pd.DataFrame, forecast_vals, conf_int, method="ARIMA"):
+    """
+    Save 12-month revenue forecast to CSV for dashboard consumption.
+    """
+    last_date   = monthly["month"].max()
+    freq_months = pd.date_range(last_date, periods=len(forecast_vals) + 1, freq="MS")[1:]
+
+    if method == "ARIMA":
+        forecast_df = pd.DataFrame({
+            "month":       freq_months,
+            "revenue":     forecast_vals.values,
+            "lower_95":    conf_int.iloc[:, 0].values,
+            "upper_95":    conf_int.iloc[:, 1].values,
+            "type":        "forecast"
+        })
+    else:
+        future_rows = forecast_vals[forecast_vals["ds"] > last_date].head(12)
+        forecast_df = pd.DataFrame({
+            "month":    future_rows["ds"].values,
+            "revenue":  future_rows["yhat"].values,
+            "lower_95": future_rows["yhat_lower"].values,
+            "upper_95": future_rows["yhat_upper"].values,
+            "type":     "forecast"
+        })
+
+    # Combine with historical
+    hist_df = pd.DataFrame({
+        "month":    monthly["month"],
+        "revenue":  monthly["revenue"],
+        "lower_95": np.nan,
+        "upper_95": np.nan,
+        "type":     "historical"
+    })
+    combined = pd.concat([hist_df, forecast_df], ignore_index=True)
+    combined.to_csv("outputs/revenue_forecast.csv", index=False)
+    print(f"✅  Revenue forecast saved → outputs/revenue_forecast.csv")
+    return combined
 
 
 # ─────────────────────────────────────────────────────────
@@ -238,10 +281,12 @@ if __name__ == "__main__":
         print("Running Prophet forecast …")
         prophet_fc, prophet_model = run_prophet_forecast(monthly)
         plot_revenue_forecast(monthly, prophet_fc, None, method="Prophet")
+        save_forecast_to_csv(monthly, prophet_fc, None, method="Prophet")
     else:
         print("Running ARIMA forecast …")
         fc_vals, ci, fitted = run_arima_forecast(monthly["revenue"])
         plot_revenue_forecast(monthly, fc_vals, ci, method="ARIMA")
+        save_forecast_to_csv(monthly, fc_vals, ci, method="ARIMA")
 
     print("Estimating Customer Lifetime Value …")
     clv_df = estimate_clv(customers, risk_scores)

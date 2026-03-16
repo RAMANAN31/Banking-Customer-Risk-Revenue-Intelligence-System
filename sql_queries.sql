@@ -1,8 +1,8 @@
 -- ============================================================
 --  Banking Intelligence Project — Banking Customer Risk & Revenue Intelligence
---  Module 6: SQL Analytical Queries
+--  Module 6: SQL Analytical Queries (12 production-grade queries)
 --  Engine  : PostgreSQL / Google BigQuery compatible
---  Purpose : Extract portfolio-level insights for senior mgmt
+--  Purpose : Extract portfolio-level insights for senior management
 -- ============================================================
 
 
@@ -87,8 +87,8 @@ ORDER BY default_rate_pct DESC;
 
 
 -- ─────────────────────────────────────────────────────────
--- Q5. City-Level Portfolio Exposure
--- KPI: Geographic concentration of NPA risk
+-- Q5. City-Level NPA Portfolio Exposure
+-- KPI: Geographic concentration of NPA risk by city
 -- ─────────────────────────────────────────────────────────
 SELECT
     city,
@@ -204,3 +204,72 @@ WHERE rs.risk_tier   = 'Low Risk'
   AND cv.clv_segment IN ('Gold', 'Platinum')
 ORDER BY cv.estimated_clv DESC
 LIMIT 20;
+
+
+-- ─────────────────────────────────────────────────────────
+-- Q11. Risk Concentration by Income Band (NEW)
+-- KPI: Identifies income strata most vulnerable to default
+--      Useful for pre-approval credit policy tuning
+-- ─────────────────────────────────────────────────────────
+SELECT
+    CASE
+        WHEN income < 200000   THEN 'Low Income (< ₹2L)'
+        WHEN income < 500000   THEN 'Lower Middle (₹2L–5L)'
+        WHEN income < 1000000  THEN 'Middle (₹5L–10L)'
+        WHEN income < 2000000  THEN 'Upper Middle (₹10L–20L)'
+        ELSE 'High Income (> ₹20L)'
+    END                                              AS income_band,
+    COUNT(*)                                         AS total_customers,
+    SUM(defaulted)                                   AS total_defaults,
+    ROUND(AVG(defaulted) * 100, 2)                   AS default_rate_pct,
+    ROUND(AVG(credit_score), 0)                      AS avg_credit_score,
+    ROUND(AVG(loan_amount), 2)                       AS avg_loan_amount,
+    ROUND(SUM(CASE WHEN defaulted = 1 THEN loan_amount ELSE 0 END), 2)
+                                                     AS npa_exposure,
+    ROUND(
+        SUM(CASE WHEN defaulted=1 THEN loan_amount ELSE 0 END)
+        / NULLIF(SUM(loan_amount),0) * 100, 2
+    )                                                AS npa_rate_pct
+FROM customers
+WHERE has_loan = 1
+GROUP BY 1
+ORDER BY default_rate_pct DESC;
+
+
+-- ─────────────────────────────────────────────────────────
+-- Q12. Churner Segment Risk & CLV Impact Analysis (NEW)
+-- KPI: Customers at risk of disengagement — revenue leakage alert
+--      Combines K-Means segment 3 (Churner) with risk and CLV data
+--      Enables proactive retention campaign prioritisation
+-- ─────────────────────────────────────────────────────────
+WITH churner_base AS (
+    SELECT
+        c.customer_id,
+        c.city,
+        c.employment_type,
+        c.income,
+        c.credit_score,
+        c.tenure_months,
+        rs.default_probability,
+        rs.risk_tier,
+        cv.estimated_clv,
+        cv.clv_segment,
+        cs.segment                                   AS kmeans_segment
+    FROM customers          c
+    JOIN risk_scored        rs ON rs.customer_id = c.customer_id
+    JOIN clv_estimates      cv ON cv.customer_id = c.customer_id
+    JOIN customer_segments  cs ON cs.customer_id = c.customer_id
+    WHERE cs.segment = 3                             -- Churner Watch cluster
+)
+SELECT
+    city,
+    COUNT(*)                                         AS churner_count,
+    ROUND(AVG(default_probability) * 100, 2)         AS avg_default_prob_pct,
+    ROUND(AVG(estimated_clv), 2)                     AS avg_clv,
+    ROUND(SUM(estimated_clv), 2)                     AS total_clv_at_risk,
+    ROUND(AVG(credit_score), 0)                      AS avg_credit_score,
+    ROUND(AVG(income), 2)                            AS avg_income,
+    ROUND(AVG(tenure_months), 1)                     AS avg_tenure_months
+FROM churner_base
+GROUP BY city
+ORDER BY total_clv_at_risk DESC;

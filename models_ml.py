@@ -15,7 +15,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
 import seaborn as sns
-import warnings, os, joblib
+import warnings, os, joblib, json
 warnings.filterwarnings("ignore")
 
 from sklearn.model_selection    import train_test_split, StratifiedKFold, cross_val_score
@@ -45,11 +45,14 @@ NUMERIC_FEATURES = [
     "credit_limit", "cc_balance",
     "credit_utilisation_ratio", "income_to_loan_ratio",
     "emi_to_income_ratio", "interest_burden_score",
+    "loan_to_value_ratio", "credit_age_score",
     "repayment_consistency_score", "total_missed_payments",
     "avg_payment_coverage", "late_payment_rate",
+    "payment_delay_frequency", "max_consecutive_missed",
     "spending_volatility", "avg_monthly_spend",
     "total_debit_6m", "total_credit_6m",
     "net_cash_flow_6m", "transaction_frequency",
+    "debit_to_credit_ratio", "high_spend_month_flag",
 ]
 
 
@@ -105,6 +108,7 @@ def train_and_evaluate(X, y, feature_cols):
     results  = {}
     best_auc = 0
     best_model_name = None
+    all_metrics = {}
 
     print("\n" + "=" * 60)
     print("  MODEL TRAINING & EVALUATION REPORT")
@@ -134,6 +138,14 @@ def train_and_evaluate(X, y, feature_cols):
             "cv_auc": cv_aucs.mean(),
         }
 
+        all_metrics[name] = {
+            "auc_roc":     round(auc, 4),
+            "f1_score":    round(f1, 4),
+            "avg_precision": round(ap, 4),
+            "cv_auc_mean": round(cv_aucs.mean(), 4),
+            "cv_auc_std":  round(cv_aucs.std(), 4),
+        }
+
         print(f"\n  ── {name} ──")
         print(f"     CV AUC (5-fold)  : {cv_aucs.mean():.4f} ± {cv_aucs.std():.4f}")
         print(f"     Test AUC-ROC     : {auc:.4f}")
@@ -147,6 +159,17 @@ def train_and_evaluate(X, y, feature_cols):
             best_auc = auc
             best_model_name = name
 
+    # Save metrics JSON for dashboard consumption
+    metrics_out = {
+        "models": all_metrics,
+        "best_model": best_model_name,
+        "best_auc": round(best_auc, 4),
+        "test_size": 0.20,
+        "n_features": len(feature_cols),
+    }
+    with open("outputs/model_metrics.json", "w") as f:
+        json.dump(metrics_out, f, indent=2)
+    print(f"\n✅  Model metrics saved → outputs/model_metrics.json")
     print(f"\n🏆  Best model: {best_model_name}  (AUC = {best_auc:.4f})")
     return results, X_train, X_test, y_train, y_test, best_model_name, feature_cols
 
@@ -202,12 +225,12 @@ def plot_feature_importance(results, best_model_name, feature_cols):
     else:
         return
 
-    top_n = 15
+    top_n = 20
     idx   = np.argsort(importances)[-top_n:][::-1]
     top_features = [feature_cols[i] for i in idx]
     top_values   = importances[idx]
 
-    fig, ax = plt.subplots(figsize=(10, 6))
+    fig, ax = plt.subplots(figsize=(10, 7))
     colors  = ["#003366" if v > np.median(top_values) else "#6699CC"
                for v in top_values]
     bars = ax.barh(range(top_n), top_values[::-1], color=colors[::-1])
@@ -220,6 +243,15 @@ def plot_feature_importance(results, best_model_name, feature_cols):
     plt.savefig("outputs/02_feature_importance.png", dpi=150, bbox_inches="tight")
     plt.close()
     print("✅  Saved → outputs/02_feature_importance.png")
+
+    # Save feature importance as JSON for dashboard
+    feat_imp_dict = {
+        "features": top_features,
+        "importances": [round(v, 6) for v in top_values.tolist()]
+    }
+    with open("outputs/feature_importance.json", "w") as f:
+        json.dump(feat_imp_dict, f, indent=2)
+    print("✅  Saved → outputs/feature_importance.json")
 
 
 def plot_confusion_matrix(results, best_model_name, y_test):
@@ -240,7 +272,87 @@ def plot_confusion_matrix(results, best_model_name, y_test):
 
 
 # ─────────────────────────────────────────────────────────
-# 5. RISK TIER ASSIGNMENT
+# 5. SHAP EXPLAINABILITY
+# ─────────────────────────────────────────────────────────
+
+def compute_shap_values(results, best_model_name, X_train, X_test, feature_cols):
+    """
+    Compute SHAP values for the best model and save:
+    - outputs/10_shap_summary.png
+    - outputs/shap_feature_importance.json
+    """
+    try:
+        import shap
+    except ImportError:
+        print("⚠️  SHAP not installed. Run: pip install shap")
+        return
+
+    best_model = results[best_model_name]["model"]
+    print(f"\nComputing SHAP values for {best_model_name} …")
+
+    # Use a sample for speed
+    sample_size = min(500, len(X_test))
+    X_sample = X_test.iloc[:sample_size]
+
+    try:
+        if best_model_name == "Logistic Regression":
+            # For Pipeline, get the transformed data
+            scaler = best_model.named_steps["scaler"]
+            clf    = best_model.named_steps["clf"]
+            X_scaled_train = scaler.transform(X_train)
+            X_scaled_sample = scaler.transform(X_sample)
+            explainer  = shap.LinearExplainer(clf, X_scaled_train,
+                                              feature_perturbation="interventional")
+            shap_values = explainer.shap_values(X_scaled_sample)
+            X_plot = pd.DataFrame(X_scaled_sample, columns=feature_cols)
+        else:
+            explainer   = shap.TreeExplainer(best_model)
+            shap_values = explainer.shap_values(X_sample)
+            X_plot = X_sample.copy()
+            # For multi-output (RF returns list), take class=1
+            if isinstance(shap_values, list):
+                shap_values = shap_values[1]
+
+        # SHAP Summary Plot (beeswarm)
+        fig, ax = plt.subplots(figsize=(10, 8))
+        shap.summary_plot(shap_values, X_plot, feature_names=feature_cols,
+                          show=False, plot_size=None, max_display=20)
+        plt.title(f"SHAP Feature Impact — {best_model_name}", fontsize=13, pad=12)
+        plt.tight_layout()
+        plt.savefig("outputs/10_shap_summary.png", dpi=150, bbox_inches="tight")
+        plt.close()
+        print("✅  Saved → outputs/10_shap_summary.png")
+
+        # SHAP mean absolute values for dashboard bar chart
+        mean_shap = np.abs(shap_values).mean(axis=0)
+        shap_idx  = np.argsort(mean_shap)[::-1][:20]
+        shap_imp  = {
+            "features":    [feature_cols[i] for i in shap_idx],
+            "mean_abs_shap": [round(float(mean_shap[i]), 6) for i in shap_idx],
+            "model": best_model_name
+        }
+        with open("outputs/shap_feature_importance.json", "w") as f:
+            json.dump(shap_imp, f, indent=2)
+        print("✅  Saved → outputs/shap_feature_importance.json")
+
+    except Exception as e:
+        print(f"⚠️  SHAP computation failed: {e}")
+        # Fallback: use model's native feature importance
+        if hasattr(best_model, "feature_importances_"):
+            imp = best_model.feature_importances_
+            idx = np.argsort(imp)[::-1][:20]
+            shap_imp = {
+                "features":    [feature_cols[i] for i in idx],
+                "mean_abs_shap": [round(float(imp[i]), 6) for i in idx],
+                "model": best_model_name
+            }
+            with open("outputs/shap_feature_importance.json", "w") as f:
+                json.dump(shap_imp, f, indent=2)
+            print("✅  Saved fallback importance → outputs/shap_feature_importance.json")
+
+
+# ─────────────────────────────────────────────────────────
+# 6. RISK TIER ASSIGNMENT
 # ─────────────────────────────────────────────────────────
 
 def assign_risk_tiers(df_original: pd.DataFrame,
@@ -267,7 +379,7 @@ def assign_risk_tiers(df_original: pd.DataFrame,
 
 
 # ─────────────────────────────────────────────────────────
-# 6. MAIN
+# 7. MAIN
 # ─────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
@@ -281,6 +393,9 @@ if __name__ == "__main__":
     plot_roc_curves(results, y_test)
     plot_feature_importance(results, best_model_name, feature_cols)
     plot_confusion_matrix(results, best_model_name, y_test)
+
+    print("\nComputing SHAP explainability …")
+    compute_shap_values(results, best_model_name, X_train, X_test, feature_cols)
 
     df_original = pd.read_csv("data/feature_matrix.csv")
     bool_cols   = df_original.select_dtypes("bool").columns
